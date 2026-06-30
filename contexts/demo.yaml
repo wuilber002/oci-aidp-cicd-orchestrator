@@ -4,11 +4,11 @@ runtime:
   auth_method: instance_principal
 
 aidp:
-  ocid: ocid1.aidataplatform....
+  ocid: ocid1.aidataplatform.oc1.sa-saopaulo-1.amaaaaaa7bxdsoyajusf4tv3rd2ymljmgpwvdi6ywpwb3lvedafnf4lo6d4a
   region: sa-saopaulo-1
 
 git:
-  repository_url: https://github.com/wuilber002/oci-aidp-cicd-data
+  repository_url: https://147.15.122.97/cicd_aidp/oci-aidp-cicd-data.git
   credential_name: demo_cicd
   branch: main
   parent_dir: /Workspace/demo_cicd
