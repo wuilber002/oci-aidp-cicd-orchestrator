@@ -1,0 +1,39 @@
+{
+  "name": "cicd_seed_workflow_alt",
+  "description": "Alternative seed workflow job",
+  "path": "jobs",
+  "maxConcurrentRuns": 1,
+  "schedule": null,
+  "parameters": [
+    {
+      "name": "job_param",
+      "value": "seed_alt_value"
+    }
+  ],
+  "jobClusters": [
+    {
+      "clusterName": "cicd_seed_cluster",
+      "newCluster": null
+    }
+  ],
+  "tasks": [
+    {
+      "type": "NOTEBOOK_TASK",
+      "taskKey": "validate_dummy_data_only",
+      "dependsOn": [],
+      "runIf": "ALL_SUCCESS",
+      "maxRetries": 0,
+      "notebookPath": "__NOTEBOOK_VALIDATE__",
+      "cluster": {
+        "clusterName": "cicd_seed_cluster",
+        "newCluster": null
+      },
+      "parameters": [
+        {
+          "name": "job_param",
+          "value": "{{job.parameters.job_param}}"
+        }
+      ]
+    }
+  ]
+}

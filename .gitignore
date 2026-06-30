@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtualenv local
+.venv/
+.downloads/
+
+# Logs de execução
+logs/
+*.log
+
+# Artefatos locais do client AIDP
+aidp_python_client-*.whl
+aidp_python_client-*.zip
+
+# Clones e áreas auxiliares locais
+git_clone/
+
+# Configurações e roteiros locais com valores de ambiente/teste
+source-workspace*.yaml
+target-workspace*.yaml
+commands.sh
+commands.txt
+
+# Metadados locais de ferramenta
+.agents/
+.codex/
+
+# Nao sera levado agora
+make-infra/
+tools/

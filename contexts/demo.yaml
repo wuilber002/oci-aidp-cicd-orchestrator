@@ -1,0 +1,24 @@
+profile: demo
+
+runtime:
+  auth_method: instance_principal
+
+aidp:
+  ocid: ocid1.aidataplatform....
+  region: sa-saopaulo-1
+
+git:
+  repository_url: https://github.com/wuilber002/oci-aidp-cicd-data
+  credential_name: demo_cicd
+  branch: main
+  parent_dir: /Workspace/demo_cicd
+  bundle_path: bundle
+  stage_bundle_path: bundle_stage
+
+source:
+  workspace_name: demo-cicd-source-1604
+  workspace_description: DEMO - DO NOT USE IN PRODUCTION - Source workspace for demo transport validation
+
+target:
+  workspace_name: demo-cicd-target-1604
+  workspace_description: DEMO - DO NOT USE IN PRODUCTION - Target workspace for demo transport validation

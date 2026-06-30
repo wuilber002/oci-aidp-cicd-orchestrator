@@ -1,0 +1,4 @@
+# O pacote `oci` é instalado e validado a partir da dependência transitiva
+# do SDK oficial do AIDP, para evitar conflito de versão entre os dois.
+requests>=2.31.0
+PyYAML>=6.0

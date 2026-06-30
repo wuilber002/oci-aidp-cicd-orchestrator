@@ -1,0 +1,33 @@
+{
+  "displayName": "cicd_seed_cluster",
+  "description": "Seed cluster for CI/CD workspace transport validation",
+  "type": "USER",
+  "nodeType": null,
+  "driverConfig": {
+    "driverShape": "amd.generic",
+    "driverShapeConfig": {
+      "ocpus": 2,
+      "gpus": 0,
+      "memoryInGBs": 16
+    }
+  },
+  "workerConfig": {
+    "workerShape": "amd.generic",
+    "workerShapeConfig": {
+      "ocpus": 2,
+      "gpus": 0,
+      "memoryInGBs": 16
+    },
+    "minWorkerCount": 1,
+    "maxWorkerCount": 1
+  },
+  "clusterRuntimeConfig": {
+    "type": "SPARK",
+    "initScripts": [],
+    "sparkVersion": "3.5.0",
+    "sparkAdvancedConfigurations": {},
+    "sparkEnvVariables": {}
+  },
+  "autoTerminationMinutes": 15,
+  "loggingConfig": null
+}
