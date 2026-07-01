@@ -444,24 +444,29 @@ def build_source_config(args, *, demo_suffix: str = "") -> Dict[str, Any]:
 
 
 def build_target_config(
-    source_cfg: Dict[str, Any],
-    workspace_name: str,
-    workspace_description: str,
+    args,
     *,
     demo: bool = False,
     demo_suffix: str = "",
 ) -> Dict[str, Any]:
     cfg = apply_config_defaults({
         "aidp": {
-            "region": source_cfg["aidp"]["region"],
-            "ocid": source_cfg["aidp"]["ocid"],
-            "workspace_name": workspace_name,
-            "workspace_description": workspace_description,
+            "region": args.region,
+            "ocid": args.aidp_ocid,
+            "workspace_name": args.workspace_name,
+            "workspace_description": args.workspace_description,
         },
-        "git": dict(source_cfg["git"]),
+        "git": {
+            "repository_url": args.repository_url,
+            "branch": args.branch,
+            "parent_dir": args.parent_dir,
+            "bundle_path": args.bundle_name,
+            "stage_bundle_path": args.stage_bundle_name,
+            "credential_name": args.credential_name,
+        },
         "options": {},
     })
-    if demo or (source_cfg.get("options") or {}).get("demo_mode"):
+    if demo:
         suffix = str(demo_suffix or "").strip()
         if not suffix:
             raise RuntimeError("demo_suffix is required to build the demo target configuration")
@@ -490,6 +495,30 @@ def _build_source_args_from_context(args, context_name: str) -> tuple[Any, bool]
             bundle_name=_context_value(role, "git", "bundle_path", args.bundle_name),
             stage_bundle_name=_context_value(role, "git", "stage_bundle_path", args.stage_bundle_name),
             credential_name=_context_value(role, "git", "credential_name", args.credential_name),
+            _context_payload=role,
+            _context_name=context_name,
+        ),
+        demo_mode,
+    )
+
+
+def _build_target_args_from_context(args, context_name: str) -> tuple[Any, bool]:
+    context = load_context(context_name)
+    role = context_role_settings(context, "target")
+    demo_mode = context_demo_mode(context)
+    return (
+        SimpleNamespace(
+            demo=demo_mode,
+            region=_context_value(role, "aidp", "region", getattr(args, "region", None)),
+            aidp_ocid=_context_value(role, "aidp", "ocid", getattr(args, "aidp_ocid", None)),
+            workspace_name=_context_value(role, "aidp", "workspace_name", args.workspace_name),
+            workspace_description=_context_value(role, "aidp", "workspace_description", args.workspace_description),
+            repository_url=_context_value(role, "git", "repository_url", getattr(args, "repository_url", None)),
+            branch=_context_value(role, "git", "branch", getattr(args, "branch", None)),
+            parent_dir=_context_value(role, "git", "parent_dir", getattr(args, "parent_dir", None)),
+            bundle_name=_context_value(role, "git", "bundle_path", getattr(args, "bundle_name", None)),
+            stage_bundle_name=_context_value(role, "git", "stage_bundle_path", getattr(args, "stage_bundle_name", None)),
+            credential_name=_context_value(role, "git", "credential_name", getattr(args, "credential_name", None)),
             _context_payload=role,
             _context_name=context_name,
         ),
@@ -646,8 +675,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     tgt.add_argument("--auth-method", default=None)
     tgt.add_argument("--context")
     tgt.add_argument("--demo", action="store_true")
+    tgt.add_argument("--region", required=False)
+    tgt.add_argument("--aidp-ocid", required=False)
     tgt.add_argument("--workspace-name", required=False)
     tgt.add_argument("--workspace-description", default=PREPARE_TARGET_WORKSPACE_DESCRIPTION)
+    tgt.add_argument("--repository-url", required=False)
+    tgt.add_argument("--branch", default=DEFAULT_GIT_BRANCH)
+    tgt.add_argument("--parent-dir", default=DEFAULT_GIT_PARENT_DIR)
+    tgt.add_argument("--bundle-name", default=DEFAULT_BUNDLE_NAME)
+    tgt.add_argument("--stage-bundle-name", default=DEFAULT_STAGE_BUNDLE_NAME)
+    tgt.add_argument("--credential-name", required=False)
 
     args = parser.parse_args(argv)
     setup_logging("cicd-prepare")
@@ -702,57 +739,37 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         context = load_context(context_name)
         context_demo = context_demo_mode(context)
         auth_method = cli_auth_method or context_auth_method(context) or DEFAULT_AUTH_METHOD
-    source_cfg_path = source_config_output_path_for_context(context_name, demo=bool(args.demo) or context_demo)
-    source_cfg = load_config(source_cfg_path)
-    target_cfg_path = target_config_output_path_for_context(
-        context_name,
-        demo=bool(args.demo) or context_demo or bool((source_cfg.get("options") or {}).get("demo_mode")),
-    )
+        args, context_demo = _build_target_args_from_context(args, context_name)
+    target_cfg_path = target_config_output_path_for_context(context_name, demo=bool(args.demo) or context_demo)
     if args.demo:
-        inherited_source_suffix = str((source_cfg.get("options") or {}).get("demo_suffix") or "").strip()
-        generated_suffix, reused_existing_suffix = resolve_demo_suffix(
-            target_cfg_path,
-            inherited_suffix=inherited_source_suffix,
-        )
+        generated_suffix, reused_existing_suffix = resolve_demo_suffix(target_cfg_path)
         args.workspace_name = build_demo_workspace_name(DEMO_TARGET_WORKSPACE_PREFIX, generated_suffix)
         args.workspace_description = "{} - Target workspace for demo transport validation".format(DEMO_DESCRIPTION_PREFIX)
         if reused_existing_suffix:
             log.info("Demo profile reused for target: suffix=%s credential=%s", generated_suffix, DEMO_GIT_CREDENTIAL_NAME)
-        elif inherited_source_suffix:
-            log.info("Demo profile inherited from source to target: suffix=%s credential=%s", generated_suffix, DEMO_GIT_CREDENTIAL_NAME)
         else:
             log.info("Demo profile enabled for target: suffix=%s credential=%s", generated_suffix, DEMO_GIT_CREDENTIAL_NAME)
-    elif (source_cfg.get("options") or {}).get("demo_mode"):
-        inherited_suffix = str((source_cfg.get("options") or {}).get("demo_suffix") or "").strip()
-        if not inherited_suffix:
-            raise RuntimeError("source-workspace.demo.yaml is in demo mode but does not contain options.demo_suffix")
-        args.workspace_name = build_demo_workspace_name(DEMO_TARGET_WORKSPACE_PREFIX, inherited_suffix)
-        args.workspace_description = "{} - Target workspace for demo transport validation".format(DEMO_DESCRIPTION_PREFIX)
-        log.info("Demo profile inherited from source to target: suffix=%s credential=%s", inherited_suffix, DEMO_GIT_CREDENTIAL_NAME)
     elif not str(args.workspace_name or "").strip():
-        if context_name:
-            target_role = context_role_settings(load_context(context_name), "target")
-            args.workspace_name = _context_value(target_role, "aidp", "workspace_name", args.workspace_name)
-            args.workspace_description = _context_value(
-                target_role,
-                "aidp",
-                "workspace_description",
-                args.workspace_description,
-            )
         if not str(args.workspace_name or "").strip():
             raise RuntimeError("--workspace-name is required when --demo is not enabled")
+    if not str(getattr(args, "region", "") or "").strip():
+        raise RuntimeError("--region is required for target prepare")
+    if not str(getattr(args, "aidp_ocid", "") or "").strip():
+        raise RuntimeError("--aidp-ocid is required for target prepare")
+    if not str(getattr(args, "repository_url", "") or "").strip():
+        raise RuntimeError("--repository-url is required for target prepare")
+    if not str(getattr(args, "credential_name", "") or "").strip():
+        raise RuntimeError("--credential-name is required for target prepare")
 
     cfg = build_target_config(
-        source_cfg,
-        args.workspace_name,
-        args.workspace_description,
+        args,
         demo=bool(args.demo),
-        demo_suffix=generated_suffix if args.demo else inherited_suffix if (source_cfg.get("options") or {}).get("demo_mode") else "",
+        demo_suffix=generated_suffix if args.demo else "",
     )
     if context_name:
-        cfg = _apply_context_sections(cfg, SimpleNamespace(_context_payload=context_role_settings(load_context(context_name), "target")))
+        cfg = _apply_context_sections(cfg, args)
     log.info("== Stage 0: prepare workspace %s ==", cfg["aidp"]["workspace_name"])
-    if args.demo or (source_cfg.get("options") or {}).get("demo_mode"):
+    if args.demo:
         write_yaml(target_cfg_path, cfg)
         log.debug("Target configuration file persisted before remote execution")
     result = prepare_workspace(cfg, auth_method)

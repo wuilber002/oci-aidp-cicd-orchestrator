@@ -8,6 +8,7 @@ import os
 import posixpath
 import re
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 import yaml
@@ -203,6 +204,11 @@ def ensure_source_git_folder(client: AidpClient, cfg: Dict[str, Any], credential
         log.info("The Git folder for workspace %s is already associated; keeping the current workspace state", workspace_name)
         return folder_path
     client.ensure_git_folder_credential(folder_path, credential_key)
+    log.info("Updating the existing Git folder on branch %s", cfg["git"]["branch"])
+    resp = client.git_pull(folder_path, cfg["git"]["branch"])
+    key = _async_key(resp) if hasattr(resp, "headers") else None
+    if key:
+        client.wait_for_async(key, purpose="Workspace {} Git folder update".format(workspace_name))
     log.info("The Git folder for workspace %s is ready for use", workspace_name)
     return folder_path
 
@@ -570,10 +576,12 @@ def log_publish_source_summary(result: Dict[str, Any]) -> None:
     changed_files = result.get("changed_files") or []
     reused_existing_commit = bool(result.get("reused_existing_commit"))
     deploy_skipped_no_changes = bool(result.get("deploy_skipped_no_changes"))
+    force_version_change = bool(result.get("force_version_change"))
     stage_bundle_path = str(result.get("stage_bundle_path") or "").strip()
     log.info("== Publish source summary ==")
     if stage_bundle_path:
         log.info("Stage bundle: %s", stage_bundle_path)
+    log.info("Force version-change mode: %s", "enabled" if force_version_change else "disabled")
     if reused_existing_commit:
         log.info("Source publication: reused the latest content already versioned in the repository")
     if deploy_skipped_no_changes:
@@ -1136,7 +1144,26 @@ def create_bundle_with_retries(
         except Exception as exc:
             last_err = exc
             message = str(exc)
-            if "already exists" not in message.lower():
+            lowered = message.lower()
+            if "failed to create directory in volume" in lowered or "failed to upload file to volume" in lowered:
+                log.warning(
+                    "Bundle %s hit a transient workspace-volume error; retrying in %ss",
+                    bundle_path,
+                    delay,
+                )
+                log_debug_context(
+                    "Bundle creation transient volume failure",
+                    bundle_path=bundle_path,
+                    attempt=idx,
+                    total_attempts=total,
+                    retry_delay_secs=delay,
+                    error=message,
+                )
+                client.ensure_directory(details["path"], purpose="Stage bundle area setup")
+                ensure_path_absent(client, bundle_path)
+                time.sleep(delay)
+                continue
+            if "already exists" not in lowered:
                 raise
             log.warning(
                 "Bundle %s still appears as existing; retrying in %ss",
@@ -1278,11 +1305,33 @@ def _git_relpath(folder_path: str, object_path: str) -> str:
     return object_path[len(root) :]
 
 
+def force_versionable_marker_update(source_client: AidpClient, cfg: Dict[str, Any], commit_message: str) -> str:
+    folder_path = resolve_folder_path(cfg)
+    marker_dir = folder_path.rstrip("/") + "/.cicd"
+    marker_path = marker_dir + "/forced-version-change.json"
+    source_client.ensure_directory(marker_dir, purpose="Forced version-change marker directory")
+    payload = {
+        "updated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "reason": "forced_version_change",
+        "commit_message": commit_message,
+        "workspace_name": cfg.get("aidp", {}).get("workspace_name"),
+    }
+    source_client.put_workspace_file(
+        marker_path,
+        json.dumps(payload, ensure_ascii=True, indent=2).encode("utf-8"),
+        object_type="FILE",
+        overwrite=True,
+    )
+    log.info("File uploaded: %s", marker_path)
+    return _git_relpath(folder_path, marker_path)
+
+
 def commit_and_push_bundle(
     source_client: AidpClient,
     cfg: Dict[str, Any],
     commit_message: str,
     stage_bundle_path: Optional[str] = None,
+    force_version_change: bool = False,
 ) -> List[str]:
     workspace_name = str(cfg.get("aidp", {}).get("workspace_name") or "workspace").strip() or "workspace"
     log.info("== Stage 3: version changes in the repository for workspace %s ==", workspace_name)
@@ -1298,12 +1347,18 @@ def commit_and_push_bundle(
         if stage_bundle_path
         else cfg["git"].get("stage_bundle_path", DEFAULT_STAGE_BUNDLE_NAME).strip("/")
     )
+    forced_marker_rel: Optional[str] = None
+    if force_version_change:
+        log.info("Force version-change mode enabled; injecting a marker file before git diff")
+        forced_marker_rel = force_versionable_marker_update(source_client, cfg, commit_message)
     changed_files = collect_git_diff_paths(
         source_client,
         cfg,
-        include_prefixes=["src", "shared", "aidp_workbench.yaml", stage_bundle_rel],
+        include_prefixes=["src", "shared", "aidp_workbench.yaml", stage_bundle_rel, ".cicd"],
     )
     changed_files = [path for path in changed_files if not _is_ephemeral_git_path(path)]
+    if forced_marker_rel:
+        changed_files.append(forced_marker_rel)
     changed_files = sorted(set(changed_files))
     log_debug_context(
         "Commit/push stage context",
@@ -1384,6 +1439,7 @@ def publish_source(
     target_cfg: Dict[str, Any],
     auth_method: str,
     commit_message: str,
+    force_version_change: bool = False,
 ) -> Dict[str, Any]:
     ensure_matching_git_identity(source_cfg, target_cfg)
     signer = build_signer(auth_method)
@@ -1403,6 +1459,7 @@ def publish_source(
         source_cfg,
         commit_message,
         stage_bundle_path=bundle_result["stage_bundle_path"],
+        force_version_change=force_version_change,
     )
 
     return {
@@ -1410,6 +1467,7 @@ def publish_source(
         "expected_resource_names": expected_names,
         "changed_files": changed_files,
         "stage_bundle_path": bundle_result["stage_bundle_path"],
+        "force_version_change": bool(force_version_change),
         "reused_existing_commit": False,
         "deploy_skipped_no_changes": False,
     }

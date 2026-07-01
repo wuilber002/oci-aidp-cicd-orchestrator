@@ -28,8 +28,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--commit-message",
         default="chore: publish source workspace transport bundle",
     )
+    parser.add_argument("--force-version-change", action="store_true")
     args = parser.parse_args(argv)
     setup_logging("cicd-publish-source")
+    if args.force_version_change:
+        from core.console_logging import LOGGER_NAME
+        import logging
+        logging.getLogger(LOGGER_NAME).warning("Force version-change mode is enabled for this publish-source run")
     context_name = args.context
     context_demo = False
     if context_name:
@@ -51,6 +56,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         target_cfg,
         auth_method=args.auth_method or DEFAULT_AUTH_METHOD,
         commit_message=args.commit_message,
+        force_version_change=bool(args.force_version_change),
     )
     log_publish_source_summary(result)
     return 0
