@@ -1,0 +1,27 @@
+name: Trigger Jenkins Seed
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  trigger-jenkins:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Jenkins seed webhook
+        env:
+          JENKINS_WEBHOOK_URL: https://147.15.122.97:8443/project/aidp-demo-seed
+          JENKINS_TRIGGER_TOKEN: ${{ secrets.JENKINS_TRIGGER_TOKEN }}
+        run: |
+          set -euo pipefail
+          payload='{"ref":"refs/heads/main","before":"0000000000000000000000000000000000000000","after":"'"${GITHUB_SHA}"'","project":{"path_with_namespace":"wuilber002/oci-aidp-cicd-orchestrator","web_url":"https://github.com/wuilber002/oci-aidp-cicd-orchestrator"},"repository":{"url":"https://github.com/wuilber002/oci-aidp-cicd-orchestrator.git","homepage":"https://github.com/wuilber002/oci-aidp-cicd-orchestrator"}}'
+          http_code="$(curl -ksS -o /tmp/jenkins-trigger.out -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -H 'X-Gitlab-Event: Push Hook' \
+            -H "X-Gitlab-Token: $JENKINS_TRIGGER_TOKEN" \
+            -X POST \
+            "$JENKINS_WEBHOOK_URL" \
+            --data "$payload")"
+          cat /tmp/jenkins-trigger.out
+          test "$http_code" = "200"
