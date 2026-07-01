@@ -1015,7 +1015,25 @@ class AidpClient:
             )
             return {"workspace": existing, "created": False}
         log.info("Creating workspace %s", workspace_name)
-        created = self.create_workspace(workspace_name, description=description)
+        try:
+            created = self.create_workspace(workspace_name, description=description)
+        except Exception as exc:
+            message = str(exc)
+            if "Workspace Exists with the same name" in message or "'code': 'Conflict'" in message or '"code" : "Conflict"' in message:
+                log.info("Workspace name already exists; reusing the existing workspace when it becomes visible")
+                visible = self.wait_for_workspace_visible(workspace_name, "Workspace conflict reconciliation")
+                workspace_key = visible.get("key")
+                if workspace_key:
+                    self.workspace_key = str(workspace_key)
+                log_debug_context(
+                    "Workspace conflict reconciled to existing workspace",
+                    workspace_name=workspace_name,
+                    workspace_key=workspace_key,
+                    workspace=visible,
+                    error=message,
+                )
+                return {"workspace": visible, "created": False}
+            raise
         visible = created or self.wait_for_workspace_visible(workspace_name, "Workspace creation")
         workspace_key = visible.get("key")
         if workspace_key:
