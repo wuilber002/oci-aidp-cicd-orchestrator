@@ -616,7 +616,8 @@ def prepare_workspace(cfg: Dict[str, Any], auth_method: str) -> Dict[str, Any]:
     log_phase_header(1, "ensure workspace", total_phases)
     ensured_workspace = client.ensure_workspace(workspace_name, description=workspace_description)
     workspace = ensured_workspace["workspace"]
-    cfg["aidp"]["workspace_key"] = str(workspace.get("key") or cfg["aidp"].get("workspace_key") or "")
+    resolved_workspace_key = client._workspace_key_from_payload(workspace) or client.resolve_workspace_key_by_name(workspace_name)
+    cfg["aidp"]["workspace_key"] = str(resolved_workspace_key)
     client.workspace_key = cfg["aidp"]["workspace_key"]
 
     log_phase_header(2, "resolve Git credential", total_phases)

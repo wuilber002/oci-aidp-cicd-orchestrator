@@ -9,7 +9,7 @@ aidp:
   region: sa-saopaulo-1
 
 git:
-  repository_url: https://github.com/wuilber002/oci-aidp-cicd-data
+  repository_url: https://github.com/wuilber002/oci-aidp-cicd-data.git
   credential_name: demo_cicd
   branch: main
   parent_dir: /Workspace/demo_cicd

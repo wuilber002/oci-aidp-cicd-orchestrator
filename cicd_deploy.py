@@ -838,10 +838,31 @@ class AidpClient:
     def resolve_workspace_key_by_name(self, workspace_name: str) -> str:
         item = self.find_workspace_by_name(workspace_name)
         if item:
-            key = item.get("key")
+            key = self._workspace_key_from_payload(item)
+            if key:
+                return str(key)
+        item = self.find_workspace_by_name(workspace_name, timeout=self.poll_http_timeout)
+        if item:
+            key = self._workspace_key_from_payload(item)
             if key:
                 return str(key)
         raise RuntimeError("Workspace named {!r} was not found.".format(workspace_name))
+
+    @staticmethod
+    def _workspace_key_from_payload(payload: Optional[Dict[str, Any]]) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        for candidate in (
+            payload.get("key"),
+            payload.get("workspaceKey"),
+            payload.get("workspace_key"),
+            payload.get("id"),
+            payload.get("workspaceId"),
+            payload.get("workspace_id"),
+        ):
+            if candidate:
+                return str(candidate)
+        return ""
 
     def list_workspaces(self, timeout: Optional[float] = None) -> List[Dict[str, Any]]:
         sdk = self._sdk_clients()
@@ -1020,7 +1041,7 @@ class AidpClient:
     ) -> Dict[str, Any]:
         existing = self.find_workspace_by_name(workspace_name)
         if existing:
-            workspace_key = existing.get("key")
+            workspace_key = self._workspace_key_from_payload(existing)
             if workspace_key:
                 self.workspace_key = str(workspace_key)
             log.info("Workspace ready for use: %s", workspace_name)
@@ -1039,7 +1060,7 @@ class AidpClient:
             if "Workspace Exists with the same name" in message or "'code': 'Conflict'" in message or '"code" : "Conflict"' in message:
                 log.info("Workspace name already exists; reusing the existing workspace when it becomes visible")
                 visible = self.wait_for_workspace_visible(workspace_name, "Workspace conflict reconciliation")
-                workspace_key = visible.get("key")
+                workspace_key = self._workspace_key_from_payload(visible)
                 if workspace_key:
                     self.workspace_key = str(workspace_key)
                 log_debug_context(
@@ -1052,7 +1073,7 @@ class AidpClient:
                 return {"workspace": visible, "created": False}
             raise
         visible = created or self.wait_for_workspace_visible(workspace_name, "Workspace creation")
-        workspace_key = visible.get("key")
+        workspace_key = self._workspace_key_from_payload(visible)
         if workspace_key:
             self.workspace_key = str(workspace_key)
         log_debug_context(
@@ -1105,7 +1126,7 @@ class AidpClient:
             log.info("Workspace already absent: %s", workspace_name)
             log_debug_context("Workspace already absent before destroy", workspace_name=workspace_name)
             return {"workspace_name": workspace_name, "workspace_key": "", "deleted": False, "existed": False}
-        workspace_key = str(existing.get("key") or "")
+        workspace_key = self._workspace_key_from_payload(existing)
         deleted = self.delete_workspace(workspace_key) if workspace_key else False
         self.wait_for_workspace_absent(workspace_name, "Workspace removal")
         log_debug_context(
