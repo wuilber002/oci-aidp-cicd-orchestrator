@@ -369,8 +369,8 @@ class ConsoleIndentFormatter(logging.Formatter):
     def _prefix(self, record: logging.LogRecord, message: str) -> str:
         if record.levelno >= logging.ERROR:
             if self._use_color:
-                return "{}ERROR{}".format(self.COLORS["ERROR"], self.RESET)
-            return "ERROR"
+                return "{}ERRO{}".format(self.COLORS["ERROR"], self.RESET)
+            return "ERRO"
         if record.levelno >= logging.WARNING:
             if self._use_color:
                 return "{}WARN{}".format(self.COLORS["WARNING"], self.RESET)

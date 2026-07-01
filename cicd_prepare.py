@@ -579,9 +579,10 @@ def prepare_workspace(cfg: Dict[str, Any], auth_method: str) -> Dict[str, Any]:
         git=cfg.get("git", {}),
         aidp=cfg.get("aidp", {}),
     )
-    total_phases = 4
+    total_phases = 5
     log_phase_header(0, "preflight", total_phases)
-    credential_key = run_prepare_preflight(client, cfg)
+    log.info("Validating basic AIDP configuration")
+    log.info("AIDP endpoint context ready")
 
     log_phase_header(1, "ensure workspace", total_phases)
     ensured_workspace = client.ensure_workspace(workspace_name, description=workspace_description)
@@ -589,11 +590,14 @@ def prepare_workspace(cfg: Dict[str, Any], auth_method: str) -> Dict[str, Any]:
     cfg["aidp"]["workspace_key"] = str(workspace.get("key") or cfg["aidp"].get("workspace_key") or "")
     client.workspace_key = cfg["aidp"]["workspace_key"]
 
-    log_phase_header(2, "ensure directory", total_phases)
+    log_phase_header(2, "resolve Git credential", total_phases)
+    credential_key = run_prepare_preflight(client, cfg)
+
+    log_phase_header(3, "ensure directory", total_phases)
     log.info("Ensuring base directory %s", cfg["git"]["parent_dir"])
     client.ensure_directory(cfg["git"]["parent_dir"], purpose="Base directory setup")
 
-    log_phase_header(3, "git folder", total_phases)
+    log_phase_header(4, "git folder", total_phases)
     ensure_source_git_folder(client, cfg, credential_key)
 
     return {

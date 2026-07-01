@@ -41,6 +41,8 @@ from core.settings import (
 log = logging.getLogger(LOGGER_NAME)
 
 _PREFIX_API_VERSION = {"aiDataPlatforms": "20260430", "dataLakes": "20240831"}
+USER_SETTING_PATH_PREFIX = "aiDataPlatforms"
+USER_SETTING_API_VERSION = _PREFIX_API_VERSION[USER_SETTING_PATH_PREFIX]
 DEFAULT_API_VERSION = "20260430"
 AIDP_RESOURCE_ID_KEYS = ("ocid", "resource_ocid", "data_lake_ocid")
 VALID_AUTH_METHODS = {
@@ -365,6 +367,9 @@ class AidpClient:
 
     def lake_url(self, *parts: str) -> str:
         return self._surface_url(self.api_version, self.path_prefix, *parts)
+
+    def user_setting_url(self, *parts: str) -> str:
+        return self._surface_url(USER_SETTING_API_VERSION, USER_SETTING_PATH_PREFIX, *parts)
 
     def ws_url(self, *parts: str) -> str:
         if not self.workspace_key:
@@ -799,18 +804,25 @@ class AidpClient:
     def list_git_account_settings(self) -> List[Dict[str, Any]]:
         sdk = self._sdk_clients()
         if sdk:
-            resp = sdk["user_setting"].list_user_settings(self.resource_id)
-            data = getattr(resp, "data", None)
-            if isinstance(data, list):
-                items = data
-            else:
-                items = (
-                    getattr(data, "items", None)
-                    or getattr(data, "user_settings", None)
-                    or []
+            try:
+                resp = sdk["user_setting"].list_user_settings(self.resource_id)
+                data = getattr(resp, "data", None)
+                if isinstance(data, list):
+                    items = data
+                else:
+                    items = (
+                        getattr(data, "items", None)
+                        or getattr(data, "user_settings", None)
+                        or []
+                    )
+                return [self._model_to_dict(item) for item in list(items)]
+            except Exception as exc:
+                log_debug_context(
+                    "Git user settings listing via SDK failed; using REST fallback",
+                    resource_id=self.resource_id,
+                    error=str(exc),
                 )
-            return [self._model_to_dict(item) for item in list(items)]
-        return self.list_all(self.ws_url("userSettings"))
+        return self.list_all(self.user_setting_url("userSettings"))
 
     def resolve_workspace_key_by_name(self, workspace_name: str) -> str:
         item = self.find_workspace_by_name(workspace_name)
@@ -823,19 +835,26 @@ class AidpClient:
     def list_workspaces(self, timeout: Optional[float] = None) -> List[Dict[str, Any]]:
         sdk = self._sdk_clients()
         if sdk:
-            resp = sdk["workspace"].list_workspaces(self.resource_id)
-            data = getattr(resp, "data", None)
-            if isinstance(data, list):
-                items = data
-            else:
-                items = (
-                    getattr(data, "items", None)
-                    or getattr(data, "workspaces", None)
-                    or []
+            try:
+                resp = sdk["workspace"].list_workspaces(self.resource_id)
+                data = getattr(resp, "data", None)
+                if isinstance(data, list):
+                    items = data
+                else:
+                    items = (
+                        getattr(data, "items", None)
+                        or getattr(data, "workspaces", None)
+                        or []
+                    )
+                result = [self._model_to_dict(item) for item in list(items)]
+                log_debug_context("Workspaces listed", resource_id=self.resource_id, count=len(result), items=result)
+                return result
+            except Exception as exc:
+                log_debug_context(
+                    "Workspace listing via SDK failed; using REST fallback",
+                    resource_id=self.resource_id,
+                    error=str(exc),
                 )
-            result = [self._model_to_dict(item) for item in list(items)]
-            log_debug_context("Workspaces listed", resource_id=self.resource_id, count=len(result), items=result)
-            return result
         resp = self.request_ok("GET", self.lake_url("workspaces"), ok=(200,), timeout=timeout)
         payload = resp.json()
         if isinstance(payload, list):

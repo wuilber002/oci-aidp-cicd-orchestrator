@@ -8,13 +8,13 @@ import base64
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from cicd_deploy import AidpClient, apply_config_defaults, build_signer, log_debug_context
+from cicd_deploy import AidpClient, apply_config_defaults, build_sdk_client_config, build_signer, log_debug_context
 from core.console_logging import LOGGER_NAME, log_phase_header, run_logged_action, run_with_logged_errors, setup_logging
 from core.contexts import context_auth_method, load_context
 
@@ -53,11 +53,10 @@ def build_client_config(context: Dict[str, Any]) -> Dict[str, Any]:
         }
     )
 
-
 def get_secret_text(secret_ocid: str, signer, region: str) -> str:
     import oci
 
-    client = oci.secrets.SecretsClient({"region": region}, signer=signer)
+    client = oci.secrets.SecretsClient(build_sdk_client_config(region), signer=signer)
     response = client.get_secret_bundle(secret_ocid)
     data = getattr(response, "data", None)
     content = getattr(data, "secret_bundle_content", None)
@@ -80,8 +79,40 @@ def resolve_provider_name(provider: str) -> str:
     return PROVIDER_ALIASES[normalized]
 
 
+def _should_fallback_user_setting(exc: Exception) -> bool:
+    payload = str(exc)
+    lowered = payload.lower()
+    return "user_setting" in lowered or "usersettings" in lowered or "notauthorizedornotfound" in lowered
+
+
+def _to_plain_data(value: Any) -> Any:
+    if hasattr(value, "swagger_types"):
+        result: Dict[str, Any] = {}
+        for key in value.swagger_types:
+            result[key] = _to_plain_data(getattr(value, key, None))
+        return result
+    if isinstance(value, dict):
+        return {str(key): _to_plain_data(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_plain_data(item) for item in value]
+    return value
+
+
+def list_git_settings_with_fallback(client: AidpClient) -> List[Dict[str, Any]]:
+    try:
+        return client.list_git_account_settings()
+    except Exception as exc:
+        if not _should_fallback_user_setting(exc):
+            raise
+        log_debug_context("Git user settings SDK list failed; using REST fallback", error=str(exc))
+    response = client.request_ok("GET", client.user_setting_url("userSettings"), ok=(200,))
+    payload = response.json()
+    items = payload if isinstance(payload, list) else payload.get("items") or payload.get("userSettings") or []
+    return [_to_plain_data(item) for item in list(items)]
+
+
 def find_git_setting_by_name(client: AidpClient, credential_name: str) -> Optional[Dict[str, Any]]:
-    for item in client.list_git_account_settings():
+    for item in list_git_settings_with_fallback(client):
         if str(item.get("name") or "").strip() != credential_name:
             continue
         data = item.get("data") or {}
@@ -110,6 +141,50 @@ def create_git_setting_payload(
         personal_access_token=personal_access_token,
     )
     return sdk, payload
+
+
+def create_user_setting_with_fallback(client: AidpClient, sdk, create_details) -> Dict[str, Any]:
+    try:
+        response = sdk["user_setting"].create_user_setting(client.resource_id, create_details)
+        return _to_plain_data(getattr(response, "data", None))
+    except Exception as exc:
+        if not _should_fallback_user_setting(exc):
+            raise
+        log_debug_context("Git user setting SDK create failed; using REST fallback", error=str(exc))
+    response = client.request_ok(
+        "POST",
+        client.user_setting_url("userSettings"),
+        body=_to_plain_data(create_details),
+        ok=(200, 201),
+    )
+    payload = response.json()
+    if isinstance(payload, dict):
+        return payload
+    return {"data": payload}
+
+
+def update_user_setting_with_fallback(client: AidpClient, sdk, setting_key: str, update_details) -> Dict[str, Any]:
+    try:
+        response = sdk["user_setting"].update_user_setting(client.resource_id, setting_key, update_details)
+        return _to_plain_data(getattr(response, "data", None))
+    except Exception as exc:
+        if not _should_fallback_user_setting(exc):
+            raise
+        log_debug_context(
+            "Git user setting SDK update failed; using REST fallback",
+            error=str(exc),
+            setting_key=setting_key,
+        )
+    response = client.request_ok(
+        "PUT",
+        client.user_setting_url("userSettings", setting_key),
+        body=_to_plain_data(update_details),
+        ok=(200, 201),
+    )
+    payload = response.json()
+    if isinstance(payload, dict):
+        return payload
+    return {"data": payload}
 
 
 def ensure_git_credential(
@@ -147,7 +222,7 @@ def ensure_git_credential(
             is_default=is_default,
             data=payload,
         )
-        sdk["user_setting"].update_user_setting(client.resource_id, setting_key, update_details)
+        update_user_setting_with_fallback(client, sdk, setting_key, update_details)
         log.info("Git credential updated: %s", credential_name)
         return {"action": "updated", "name": credential_name, "key": setting_key}
 
@@ -163,8 +238,7 @@ def ensure_git_credential(
         is_default=is_default,
         data=payload,
     )
-    response = sdk["user_setting"].create_user_setting(client.resource_id, create_details)
-    created = client._model_to_dict(getattr(response, "data", None))
+    created = create_user_setting_with_fallback(client, sdk, create_details)
     setting_key = str((created or {}).get("key") or "").strip()
     if not setting_key:
         refreshed = find_git_setting_by_name(client, credential_name)
