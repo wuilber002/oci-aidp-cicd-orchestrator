@@ -120,6 +120,7 @@ def poll_with_progress(
         return result_box["value"]
 
     last_value = _run_fetch_with_progress(None)
+    next_fetch_at = time.time() + max(fetch_interval_secs, 1)
     while time.time() < deadline:
         now = time.time()
         if now >= next_fetch_at:
@@ -602,7 +603,6 @@ class ConsoleProgressHandler(logging.StreamHandler):
         self._interactive = bool(getattr(self.stream, "isatty", lambda: False)())
         self._frame_index = 0
         self._progress_message = ""
-        self._pending_prepared: Optional[Dict[str, Any]] = None
         self._started = False
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -613,18 +613,6 @@ class ConsoleProgressHandler(logging.StreamHandler):
         if isinstance(formatter, ConsoleIndentFormatter):
             return formatter
         return None
-
-    def _flush_pending(self, current_prepared: Optional[Dict[str, Any]] = None) -> None:
-        formatter = self._console_formatter()
-        if not formatter or not self._pending_prepared:
-            return
-        pending = self._pending_prepared
-        self._pending_prepared = None
-        is_last = True
-        if current_prepared and pending.get("sibling_group") and pending.get("sibling_group") == current_prepared.get("sibling_group"):
-            is_last = False
-        self.stream.write(formatter.render_prepared(pending, is_last=is_last) + self.terminator)
-        super().flush()
 
     def _start_spinner(self) -> None:
         if not self._interactive or (self._spinner_thread and self._spinner_thread.is_alive()):
@@ -653,8 +641,6 @@ class ConsoleProgressHandler(logging.StreamHandler):
 
     def close(self) -> None:
         try:
-            with self._lock:
-                self._flush_pending()
             self._stop_spinner()
         finally:
             super().close()
@@ -662,7 +648,6 @@ class ConsoleProgressHandler(logging.StreamHandler):
     def flush(self) -> None:
         try:
             with self._lock:
-                self._flush_pending()
                 super().flush()
         except Exception:
             pass
@@ -717,8 +702,6 @@ class ConsoleProgressHandler(logging.StreamHandler):
                     self.stream.write(self.terminator)
                     self._started = True
                 if self._interactive and is_progress:
-                    if prepared:
-                        self._flush_pending(prepared)
                     self._progress_message = self._normalize_progress_message(msg_body)
                     self._progress_active = True
                     self._start_spinner()
@@ -732,16 +715,8 @@ class ConsoleProgressHandler(logging.StreamHandler):
                     self._progress_message = ""
                     should_stop_spinner = True
                     self.stream.write(self.CLEAR_LINE)
-                if prepared and formatter and prepared.get("buffered"):
-                    if self._pending_prepared and formatter.should_overlay_messages(self._pending_prepared, prepared):
-                        self._pending_prepared = prepared
-                        return
-                    self._flush_pending(prepared)
-                    self._pending_prepared = prepared
-                else:
-                    self._flush_pending(prepared)
-                    self.stream.write(msg + self.terminator)
-                    self.flush()
+                self.stream.write(msg + self.terminator)
+                self.flush()
             if should_stop_spinner:
                 self._stop_spinner()
         except RecursionError:

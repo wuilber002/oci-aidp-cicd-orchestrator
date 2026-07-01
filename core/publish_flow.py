@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 import yaml
-from core.console_logging import LOGGER_NAME, format_remaining_br, run_with_logged_errors, setup_logging
+from core.console_logging import LOGGER_NAME, run_with_logged_errors, setup_logging
 from core.settings import (
     DEFAULT_AUTH_METHOD,
     DEFAULT_DEMO_SOURCE_CONFIG_PATH,
@@ -52,6 +52,7 @@ UUID_SUFFIX_RE = re.compile(
     r"_[0-9a-f]{8}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+FORCED_VERSION_CHANGE_MARKER_DIR = "shared/cicd_orchestrator"
 FORCED_VERSION_CHANGE_MARKER_NAME = "forced-version-change.json"
 
 
@@ -151,13 +152,11 @@ def resolve_config_paths(source_path: Optional[str], target_path: Optional[str],
     return src, tgt
 
 
-def sleep_with_spinner(seconds: int, label: str) -> None:
+def sleep_with_stabilization_wait(seconds: int) -> None:
     total = max(int(seconds), 0)
     if total <= 0:
         return
-    for remaining in range(total, 0, -1):
-        log.info(label.format(seconds=format_remaining_br(remaining)))
-        time.sleep(1)
+    time.sleep(total)
 
 
 def ensure_matching_git_identity(source_cfg: Dict[str, Any], target_cfg: Dict[str, Any]) -> None:
@@ -1326,39 +1325,17 @@ def _is_forced_version_change_marker_path(path: str) -> bool:
     return normalized.endswith("/" + FORCED_VERSION_CHANGE_MARKER_NAME) or normalized == FORCED_VERSION_CHANGE_MARKER_NAME
 
 
-def _existing_force_marker_anchor(source_client: AidpClient, folder_path: str) -> str:
-    preferred = [".github", ".cicd", "shared", "src"]
-    for name in preferred:
-        candidate = folder_path.rstrip("/") + "/" + name
-        if source_client.workspace_object_exists(candidate):
-            return candidate
-
-    for item in list_workspace_objects(source_client, folder_path):
-        item_path = _workspace_item_path(item, folder_path)
-        if not item_path:
-            continue
-        if _workspace_item_type(item) != "FOLDER":
-            continue
-        return item_path.rstrip("/")
-
-    raise RuntimeError(
-        "Could not find an existing repository directory under {} to store the forced version-change marker".format(
-            folder_path
-        )
-    )
-
-
 def force_versionable_marker_update(source_client: AidpClient, cfg: Dict[str, Any], commit_message: str) -> str:
     folder_path = resolve_folder_path(cfg)
-    marker_anchor = _existing_force_marker_anchor(source_client, folder_path)
-    marker_dir = marker_anchor.rstrip("/")
+    marker_dir = folder_path.rstrip("/") + "/" + FORCED_VERSION_CHANGE_MARKER_DIR
     marker_path = marker_dir + "/" + FORCED_VERSION_CHANGE_MARKER_NAME
+    source_client.ensure_directory(marker_dir, purpose="Forced version-change marker directory")
     payload = {
         "updated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "reason": "forced_version_change",
         "commit_message": commit_message,
         "workspace_name": cfg.get("aidp", {}).get("workspace_name"),
-        "marker_anchor": _git_relpath(folder_path, marker_anchor),
+        "marker_anchor": FORCED_VERSION_CHANGE_MARKER_DIR,
     }
     source_client.put_workspace_file(
         marker_path,
@@ -1379,12 +1356,11 @@ def commit_and_push_bundle(
 ) -> List[str]:
     workspace_name = str(cfg.get("aidp", {}).get("workspace_name") or "workspace").strip() or "workspace"
     log.info("== Stage 3: version changes in the repository for workspace %s ==", workspace_name)
-    wait_label = "git diff/commit stabilization: {seconds} remaining"
     log.info(
         "Stabilizing workspace state before git diff/commit (%ss)",
         GIT_COMMIT_STABILIZATION_SECS,
     )
-    sleep_with_spinner(GIT_COMMIT_STABILIZATION_SECS, wait_label)
+    sleep_with_stabilization_wait(GIT_COMMIT_STABILIZATION_SECS)
     folder_path = resolve_folder_path(cfg)
     stage_bundle_rel = (
         _git_relpath(folder_path, stage_bundle_path)
