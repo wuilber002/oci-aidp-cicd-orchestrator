@@ -15,7 +15,61 @@ jobs:
           JENKINS_TRIGGER_TOKEN: ${{ secrets.JENKINS_TRIGGER_TOKEN }}
         run: |
           set -euo pipefail
-          payload='{"ref":"refs/heads/main","before":"0000000000000000000000000000000000000000","after":"'"${GITHUB_SHA}"'","project":{"path_with_namespace":"wuilber002/oci-aidp-cicd-orchestrator","web_url":"https://github.com/wuilber002/oci-aidp-cicd-orchestrator"},"repository":{"url":"https://github.com/wuilber002/oci-aidp-cicd-orchestrator.git","homepage":"https://github.com/wuilber002/oci-aidp-cicd-orchestrator"}}'
+          payload='{
+            "object_kind":"push",
+            "event_name":"push",
+            "before":"0000000000000000000000000000000000000000",
+            "after":"'"${GITHUB_SHA}"'",
+            "ref":"refs/heads/main",
+            "checkout_sha":"'"${GITHUB_SHA}"'",
+            "user_id":1,
+            "user_name":"github-actions",
+            "user_username":"github-actions",
+            "user_email":"noreply@github.com",
+            "project_id":101,
+            "project":{
+              "id":101,
+              "name":"oci-aidp-cicd-orchestrator",
+              "description":"GitHub mirror used to trigger Jenkins seed",
+              "web_url":"https://github.com/wuilber002/oci-aidp-cicd-orchestrator",
+              "avatar_url":null,
+              "git_ssh_url":"git@github.com:wuilber002/oci-aidp-cicd-orchestrator.git",
+              "git_http_url":"https://github.com/wuilber002/oci-aidp-cicd-orchestrator.git",
+              "namespace":"wuilber002",
+              "visibility_level":20,
+              "path_with_namespace":"wuilber002/oci-aidp-cicd-orchestrator",
+              "default_branch":"main",
+              "homepage":"https://github.com/wuilber002/oci-aidp-cicd-orchestrator",
+              "url":"git@github.com:wuilber002/oci-aidp-cicd-orchestrator.git",
+              "ssh_url":"git@github.com:wuilber002/oci-aidp-cicd-orchestrator.git",
+              "http_url":"https://github.com/wuilber002/oci-aidp-cicd-orchestrator.git"
+            },
+            "repository":{
+              "name":"oci-aidp-cicd-orchestrator",
+              "url":"git@github.com:wuilber002/oci-aidp-cicd-orchestrator.git",
+              "description":"GitHub mirror used to trigger Jenkins seed",
+              "homepage":"https://github.com/wuilber002/oci-aidp-cicd-orchestrator",
+              "git_ssh_url":"git@github.com:wuilber002/oci-aidp-cicd-orchestrator.git",
+              "git_http_url":"https://github.com/wuilber002/oci-aidp-cicd-orchestrator.git",
+              "visibility_level":20
+            },
+            "commits":[
+              {
+                "id":"'"${GITHUB_SHA}"'",
+                "message":"GitHub push",
+                "timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'",
+                "url":"https://github.com/wuilber002/oci-aidp-cicd-orchestrator/commit/'"${GITHUB_SHA}"'",
+                "author":{
+                  "name":"github-actions",
+                  "email":"noreply@github.com"
+                },
+                "added":[],
+                "modified":[],
+                "removed":[]
+              }
+            ],
+            "total_commits_count":1
+          }'
           http_code="$(curl -ksS -o /tmp/jenkins-trigger.out -w '%{http_code}' \
             -H 'Content-Type: application/json' \
             -H 'X-Gitlab-Event: Push Hook' \
