@@ -4,7 +4,7 @@ runtime:
   auth_method: instance_principal
 
 aidp:
-  ocid: ocid1.aidataplatform....
+  ocid: ocid1.aidataplatform.oc1.sa-saopaulo-1.amaaaaaa7bxdsoyajusf4tv3rd2ymljmgpwvdi6ywpwb3lvedafnf4lo6d4a
   region: sa-saopaulo-1
 
 git:
