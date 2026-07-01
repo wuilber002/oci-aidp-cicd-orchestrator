@@ -56,6 +56,7 @@ _DEFAULT_INI = {
     },
     "deploy": {
         "git_operation_parse_retry_delays_secs": "5,10,15",
+        "bundle_deploy_retry_delays_secs": "5,10,15",
     },
 }
 
@@ -174,5 +175,10 @@ PROMOTE_SPINNER_FRAME_INTERVAL_SECS = get_float("promote", "spinner_frame_interv
 DEPLOY_GIT_OPERATION_PARSE_RETRY_DELAYS_SECS = get_int_csv(
     "deploy",
     "git_operation_parse_retry_delays_secs",
+    "5,10,15",
+)
+DEPLOY_BUNDLE_RETRY_DELAYS_SECS = get_int_csv(
+    "deploy",
+    "bundle_deploy_retry_delays_secs",
     "5,10,15",
 )

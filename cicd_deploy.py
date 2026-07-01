@@ -34,6 +34,7 @@ from core.settings import (
     DEFAULT_STAGE_BUNDLE_NAME,
     DEFAULT_TARGET_CONFIG_PATH,
     DEFAULT_VERIFY_TLS,
+    DEPLOY_BUNDLE_RETRY_DELAYS_SECS,
     DEPLOY_GIT_OPERATION_PARSE_RETRY_DELAYS_SECS,
     MAX_LOG_FILES_PER_COMMAND,
 )
@@ -86,6 +87,16 @@ def _friendly_async_status(status: Optional[str]) -> str:
         "CANCELED": "canceled",
     }
     return mapping.get(value, value.lower() or "unknown")
+
+
+def _is_bundle_deploy_retryable_error(message: str) -> bool:
+    value = str(message or "").lower()
+    return "internalerror" in value or "volume error" in value or "http 500" in value
+
+
+def _is_bundle_deploy_compatibility_error(message: str) -> bool:
+    value = str(message or "").lower()
+    return "unknown resource" in value or "notauthorizedornotfound" in value or "http 404" in value
 
 
 def _friendly_bundle_deploy_status(status: Optional[str]) -> str:
@@ -834,7 +845,7 @@ class AidpClient:
 
     def list_workspaces(self, timeout: Optional[float] = None) -> List[Dict[str, Any]]:
         sdk = self._sdk_clients()
-        if sdk:
+        if sdk and timeout is None:
             try:
                 resp = sdk["workspace"].list_workspaces(self.resource_id)
                 data = getattr(resp, "data", None)
@@ -855,6 +866,12 @@ class AidpClient:
                     resource_id=self.resource_id,
                     error=str(exc),
                 )
+        elif sdk and timeout is not None:
+            log_debug_context(
+                "Workspace listing via SDK skipped because an explicit timeout was requested",
+                resource_id=self.resource_id,
+                timeout=timeout,
+            )
         resp = self.request_ok("GET", self.lake_url("workspaces"), ok=(200,), timeout=timeout)
         payload = resp.json()
         if isinstance(payload, list):
@@ -1643,29 +1660,6 @@ class AidpClient:
                 seen.add(url)
                 endpoints.append((url, label))
 
-        add(
-            self._surface_url(
-                "20240831",
-                "aiDataPlatforms",
-                "workspaces",
-                self.workspace_key,
-                "bundles",
-                "actions",
-                "deploy",
-            ),
-            "aidp-20240831",
-        )
-        add(
-            self._surface_url(
-                "20240831",
-                "aiDataPlatforms",
-                "workspaces",
-                self.workspace_key,
-                "actions",
-                "deployBundle",
-            ),
-            "aidp-20240831-legacy",
-        )
         add(self.deploy_bundle_ws_url("bundles", "actions", "deploy"), "configured-deploy-surface")
         add(self.bundle_ws_url("bundles", "actions", "deploy"), "bundle-surface")
         add(self.ws_url("bundles", "actions", "deploy"), "workspace-surface")
@@ -1692,6 +1686,29 @@ class AidpClient:
                 "deploy",
             ),
             "aidp-20260430",
+        )
+        add(
+            self._surface_url(
+                "20240831",
+                "aiDataPlatforms",
+                "workspaces",
+                self.workspace_key,
+                "bundles",
+                "actions",
+                "deploy",
+            ),
+            "aidp-20240831",
+        )
+        add(
+            self._surface_url(
+                "20240831",
+                "aiDataPlatforms",
+                "workspaces",
+                self.workspace_key,
+                "actions",
+                "deployBundle",
+            ),
+            "aidp-20240831-legacy",
         )
         return endpoints
 
@@ -1845,40 +1862,15 @@ class AidpClient:
             logger=log,
         )
 
-    def deploy_bundle(self, bundle_path: str) -> Any:
-        sdk = self._sdk_clients()
-        log_debug_context("Deploy bundle requested", bundle_path=bundle_path, workspace_key=self.workspace_key)
-        if sdk:
-            try:
-                details = sdk["models"].DeployBundleDetails(path=bundle_path)
-                resp = sdk["bundle"].deploy_bundle(self.resource_id, self.workspace_key, details)
-                return self._wait_if_async(resp, purpose="Bundle deploy")
-            except Exception as exc:
-                message = str(exc).lower()
-                if (
-                    "unknown resource" in message
-                    or "notauthorizedornotfound" in message
-                    or "internalerror" in message
-                    or "volume error" in message
-                ):
-                    log.warning(
-                        "SDK deploy_bundle failed for %s; trying REST fallback. error=%s",
-                        bundle_path,
-                        exc,
-                    )
-                else:
-                    raise
+    def _deploy_bundle_via_rest_surfaces(self, bundle_path: str) -> Dict[str, Any]:
         endpoints = self._bundle_deploy_surfaces()
-        last_err = None
-        total = len(endpoints)
+        last_retryable: Optional[Exception] = None
+        compatibility_fallbacks_started = False
+
         for index, (url, label) in enumerate(endpoints, start=1):
             try:
-                log.info(
-                    "Bundle deploy: trying surface %s (%s/%s)",
-                    label,
-                    index,
-                    total,
-                )
+                if index == 1:
+                    log.info("Bundle deploy: trying primary surface %s", label)
                 resp = self.request_ok(
                     "POST",
                     url,
@@ -1890,25 +1882,50 @@ class AidpClient:
                     log.info("Bundle deploy: operation accepted; tracking deployment via bundle status")
                 return self.wait_for_bundle_deployment(bundle_path)
             except Exception as exc:
-                last_err = exc
-                message = str(exc).lower()
-                if (
-                    "unknown resource" in message
-                    or "notauthorizedornotfound" in message
-                    or "internalerror" in message
-                    or "volume error" in message
-                ):
-                    log.warning(
-                        "Bundle deploy: surface %s failed; trying fallback %s/%s",
-                        label,
-                        min(index + 1, total),
-                        total,
-                    )
-                    log.debug("Failure detail on %s: %s", label, exc)
+                message = str(exc)
+                if _is_bundle_deploy_compatibility_error(message):
+                    if not compatibility_fallbacks_started and index < len(endpoints):
+                        compatibility_fallbacks_started = True
+                        log.warning(
+                            "Bundle deploy: primary surface %s is unavailable; trying compatibility fallbacks",
+                            label,
+                        )
+                    log.debug("Bundle deploy compatibility failure on %s: %s", label, exc)
+                    continue
+                if _is_bundle_deploy_retryable_error(message):
+                    last_retryable = exc
+                    log.debug("Bundle deploy transient failure on %s: %s", label, exc)
                     continue
                 log.debug("Bundle deploy failed via %s: %s", label, exc)
                 raise
-        raise last_err
+
+        if last_retryable:
+            raise last_retryable
+        raise RuntimeError(
+            "Bundle deploy could not find a usable API surface for {}".format(bundle_path)
+        )
+
+    def deploy_bundle(self, bundle_path: str) -> Any:
+        log_debug_context("Deploy bundle requested", bundle_path=bundle_path, workspace_key=self.workspace_key)
+        retry_delays = list(DEPLOY_BUNDLE_RETRY_DELAYS_SECS)
+        total_attempts = len(retry_delays) + 1
+        for attempt in range(1, total_attempts + 1):
+            try:
+                return self._deploy_bundle_via_rest_surfaces(bundle_path)
+            except Exception as exc:
+                if _is_bundle_deploy_retryable_error(str(exc)) and attempt <= len(retry_delays):
+                    delay = retry_delays[attempt - 1]
+                    log.warning(
+                        "Bundle deploy hit a transient backend/volume error; retrying in %ss (%s/%s)",
+                        delay,
+                        attempt,
+                        total_attempts,
+                    )
+                    log.debug("Bundle deploy retry detail on attempt %s/%s: %s", attempt, total_attempts, exc)
+                    time.sleep(delay)
+                    continue
+                raise
+        raise RuntimeError("Bundle deploy failed unexpectedly without a captured error")
 
 
 def phase0_credential(client: AidpClient, cfg: Dict[str, Any]) -> str:
@@ -1975,14 +1992,14 @@ def phase2_git_folder(
             credential_key,
         )
         if hasattr(resp, "headers") and _async_key(resp):
-            client.wait_for_async(_async_key(resp), purpose="Clonagem inicial da git folder")
+            client.wait_for_async(_async_key(resp), purpose="Initial Git folder clone")
         log.info("created git folder %s (cloning async)", folder_path)
         return
     if not metadata and associated:
         log.info("git folder already associated at %s; skipping clone", folder_path)
         return
     client.ensure_git_folder_credential(folder_path, credential_key)
-    log.info("Atualizando git folder existente pela branch %s", cfg["git"]["branch"])
+    log.info("Updating the existing Git folder on branch %s", cfg["git"]["branch"])
     resp = client.git_pull(folder_path, cfg["git"]["branch"])
     if hasattr(resp, "headers") and _async_key(resp):
         client.wait_for_async(_async_key(resp), purpose="Git folder update")

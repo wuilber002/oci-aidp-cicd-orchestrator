@@ -52,6 +52,7 @@ UUID_SUFFIX_RE = re.compile(
     r"_[0-9a-f]{8}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+FORCED_VERSION_CHANGE_MARKER_NAME = "forced-version-change.json"
 
 
 def list_all(client: AidpClient, path: str) -> List[Dict[str, Any]]:
@@ -305,11 +306,12 @@ def _parse_job_name_from_bundle_file(bundle_job_path: str, payload: Dict[str, An
     if explicit:
         return explicit
     filename = posixpath.basename(bundle_job_path.rstrip("/"))
-    variants = [filename]
     for suffix in (".job.json", ".json", ".job", ".yaml", ".yml"):
         if filename.endswith(suffix):
-            variants.append(filename[: -len(suffix)])
-    for candidate in variants:
+            candidate = filename[: -len(suffix)].strip()
+            if candidate:
+                return candidate
+    for candidate in (filename,):
         candidate = candidate.strip()
         if candidate:
             return candidate
@@ -975,7 +977,7 @@ def empty_bundle_contents_if_present(
             continue
         child_name = posixpath.basename(child_path.rstrip("/"))
         if child_name in preserved:
-            log.info("Preservando %s dentro de %s", child_name, bundle_path)
+            log.info("Preserving %s inside %s", child_name, bundle_path)
             continue
         try:
             client.delete_workspace_object_via_legacy_api(child_path)
@@ -1305,16 +1307,46 @@ def _git_relpath(folder_path: str, object_path: str) -> str:
     return object_path[len(root) :]
 
 
+def _is_forced_version_change_marker_path(path: str) -> bool:
+    normalized = str(path or "").strip().strip("/")
+    if not normalized:
+        return False
+    return normalized.endswith("/" + FORCED_VERSION_CHANGE_MARKER_NAME) or normalized == FORCED_VERSION_CHANGE_MARKER_NAME
+
+
+def _existing_force_marker_anchor(source_client: AidpClient, folder_path: str) -> str:
+    preferred = [".github", ".cicd", "shared", "src"]
+    for name in preferred:
+        candidate = folder_path.rstrip("/") + "/" + name
+        if source_client.workspace_object_exists(candidate):
+            return candidate
+
+    for item in list_workspace_objects(source_client, folder_path):
+        item_path = _workspace_item_path(item, folder_path)
+        if not item_path:
+            continue
+        if _workspace_item_type(item) != "FOLDER":
+            continue
+        return item_path.rstrip("/")
+
+    raise RuntimeError(
+        "Could not find an existing repository directory under {} to store the forced version-change marker".format(
+            folder_path
+        )
+    )
+
+
 def force_versionable_marker_update(source_client: AidpClient, cfg: Dict[str, Any], commit_message: str) -> str:
     folder_path = resolve_folder_path(cfg)
-    marker_dir = folder_path.rstrip("/") + "/.cicd"
-    marker_path = marker_dir + "/forced-version-change.json"
-    source_client.ensure_directory(marker_dir, purpose="Forced version-change marker directory")
+    marker_anchor = _existing_force_marker_anchor(source_client, folder_path)
+    marker_dir = marker_anchor.rstrip("/")
+    marker_path = marker_dir + "/" + FORCED_VERSION_CHANGE_MARKER_NAME
     payload = {
         "updated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "reason": "forced_version_change",
         "commit_message": commit_message,
         "workspace_name": cfg.get("aidp", {}).get("workspace_name"),
+        "marker_anchor": _git_relpath(folder_path, marker_anchor),
     }
     source_client.put_workspace_file(
         marker_path,
@@ -1357,6 +1389,7 @@ def commit_and_push_bundle(
         include_prefixes=["src", "shared", "aidp_workbench.yaml", stage_bundle_rel, ".cicd"],
     )
     changed_files = [path for path in changed_files if not _is_ephemeral_git_path(path)]
+    changed_files = [path for path in changed_files if not _is_forced_version_change_marker_path(path)]
     if forced_marker_rel:
         changed_files.append(forced_marker_rel)
     changed_files = sorted(set(changed_files))
