@@ -172,6 +172,18 @@ def ensure_matching_git_identity(source_cfg: Dict[str, Any], target_cfg: Dict[st
         raise RuntimeError("git.bundle_path and git.stage_bundle_path must be different")
 
 
+def validate_git_transport_settings(cfg: Dict[str, Any]) -> None:
+    git_cfg = cfg.get("git") or {}
+    for key in ("repository_url", "branch", "bundle_path"):
+        if not str(git_cfg.get(key) or "").strip():
+            raise RuntimeError("git.{} cannot be empty".format(key))
+    stage_name = str(git_cfg.get("stage_bundle_path") or DEFAULT_STAGE_BUNDLE_NAME).strip("/")
+    if not stage_name:
+        raise RuntimeError("git.stage_bundle_path cannot be empty")
+    if str(git_cfg.get("bundle_path") or "").strip("/") == stage_name:
+        raise RuntimeError("git.bundle_path and git.stage_bundle_path must be different")
+
+
 def ensure_source_git_folder(client: AidpClient, cfg: Dict[str, Any], credential_key: str) -> str:
     folder_path = resolve_folder_path(cfg)
     workspace_name = str(cfg.get("aidp", {}).get("workspace_name") or "workspace").strip() or "workspace"
@@ -1590,12 +1602,11 @@ def sync_stage_bundle_into_deploy_bundle(
 
 
 def publish_target(
-    source_cfg: Dict[str, Any],
     target_cfg: Dict[str, Any],
     auth_method: str,
     commit_message: str = "",
 ) -> Dict[str, Any]:
-    ensure_matching_git_identity(source_cfg, target_cfg)
+    validate_git_transport_settings(target_cfg)
     target_workspace_name = str(target_cfg.get("aidp", {}).get("workspace_name") or "workspace").strip() or "workspace"
     target_stage_bundle_path = resolve_stage_bundle_path(target_cfg)
 
@@ -1632,7 +1643,7 @@ def publish_target(
     return {
         "bundled_jobs": [],
         "changed_files": [],
-        "stage_bundle_path": resolve_stage_bundle_path(source_cfg),
+        "stage_bundle_path": target_stage_bundle_path,
         "target_stage_bundle_path": target_stage_bundle_path,
         "canonical_target_bundle_path": canonical_target_bundle_path,
         "name_reconciliation": name_reconciliation,
@@ -1664,7 +1675,7 @@ def promote(
         branch=source_cfg.get("git", {}).get("branch"),
     )
     source_result = publish_source(source_cfg, target_cfg, auth_method, commit_message)
-    target_result = publish_target(source_cfg, target_cfg, auth_method, commit_message)
+    target_result = publish_target(target_cfg, auth_method, commit_message)
     return {
         "bundled_jobs": source_result.get("bundled_jobs") or [],
         "changed_files": source_result.get("changed_files") or [],

@@ -1,7 +1,8 @@
 profile: demo
 
 runtime:
-  auth_method: instance_principal
+  auth_method: api_key
+  secret_id: ocid1.vaultsecret.oc1.sa-saopaulo-1.amaaaaaa7bxdsoyaeaehfzmf54rk3gpt5jwyq2qtebetgnfhcko56zc7orua
 
 aidp:
   ocid: ocid1.aidataplatform.oc1.sa-saopaulo-1.amaaaaaa7bxdsoyajusf4tv3rd2ymljmgpwvdi6ywpwb3lvedafnf4lo6d4a
