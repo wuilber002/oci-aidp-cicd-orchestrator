@@ -4,6 +4,16 @@
 
 Pacote mínimo para executar o fluxo `workspace source -> bundle Git -> workspace target`.
 
+## Aviso Legal
+
+Este repositório contém scripts de automação, templates e materiais de referência em estilo comunitário, destinados a apoiar experimentação, demonstrações e cenários customizados de orquestração de CI/CD.
+
+Esses artefatos não constituem funcionalidade oficial de produto Oracle, não são cobertos pelos serviços de suporte da Oracle e não possuem compromisso de nível de serviço, manutenção, evolução ou garantia de compatibilidade.
+
+O uso dos scripts, pipelines, templates e exemplos deste repositório é de inteira responsabilidade e por conta e risco do usuário. Cabe ao usuário validar comportamento, segurança, conformidade e adequação operacional antes de utilizar qualquer conteúdo em ambientes de desenvolvimento, teste ou produção.
+
+A Oracle não se responsabiliza por perdas, danos, interrupções de serviço, configurações incorretas ou impactos não intencionais decorrentes do uso, modificação ou redistribuição dos materiais contidos neste repositório.
+
 ## Arquivos
 
 - `bootstrap_venv.py`: cria `.venv` e instala dependências a partir de `requirements.txt`.

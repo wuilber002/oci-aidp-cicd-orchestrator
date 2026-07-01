@@ -1,8 +1,18 @@
 # CI/CD Workspace Transport Package
 
-[Read this document in Portuguese (Brazil)](README.pt-BR.md)
+[Leia este documento em Português (Brasil)](README.pt-BR.md)
 
 Minimal package to execute the flow `source workspace -> Git bundle -> target workspace`.
+
+## Disclaimer
+
+This repository contains community-style automation scripts and reference materials intended to support experimentation, demonstrations, and custom CI/CD orchestration scenarios.
+
+These artifacts are not an official Oracle product feature, are not covered by Oracle support services, and do not carry service level commitments, maintenance guarantees, or compatibility guarantees.
+
+Use of the scripts, pipelines, templates, and examples in this repository is at the user's own discretion and risk. Users are responsible for validating behavior, security, compliance, and operational suitability before using any content in development, test, or production environments.
+
+Oracle is not responsible for any loss, damage, service interruption, misconfiguration, or unintended impact resulting from the use, modification, or redistribution of the materials in this repository.
 
 ## Files
 
