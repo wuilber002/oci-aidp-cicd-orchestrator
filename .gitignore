@@ -20,7 +20,7 @@ git_clone/
 # Configurações e roteiros locais com valores de ambiente/teste
 source-workspace*.yaml
 target-workspace*.yaml
-contexts/demo2.yaml
+contexts/local.yaml
 commands.sh
 commands.txt
 

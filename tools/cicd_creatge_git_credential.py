@@ -249,6 +249,21 @@ def ensure_git_credential(
     return {"action": "created", "name": credential_name, "key": setting_key}
 
 
+def ensure_git_credential_presence(
+    client: AidpClient,
+    *,
+    credential_name: str,
+) -> Optional[Dict[str, Any]]:
+    existing = find_git_setting_by_name(client, credential_name)
+    if not existing:
+        return None
+    setting_key = str(existing.get("key") or "").strip()
+    if not setting_key:
+        raise RuntimeError("existing Git credential {!r} has no key".format(credential_name))
+    log.info("Git credential already exists: %s", credential_name)
+    return {"action": "existing", "name": credential_name, "key": setting_key}
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--context", required=True)
@@ -258,6 +273,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--provider", default="github", choices=sorted(PROVIDER_ALIASES))
     parser.add_argument("--auth-method", default=None)
     parser.add_argument("--set-default", action="store_true")
+    parser.add_argument("--force-update", action="store_true")
     args = parser.parse_args(argv)
 
     setup_logging("cicd-create-git-credential")
@@ -286,26 +302,35 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     log.info("Using context %s", args.context)
-    log.info("Loading Git PAT from Vault secret %s", args.vault_secret_ocid)
-    personal_access_token = run_logged_action(
-        "Resolve Git PAT from Vault",
-        lambda: get_secret_text(args.vault_secret_ocid, signer, cfg["aidp"]["region"]),
-        logger=log,
-    )
-
     log_phase_header(1, "ensure Git credential", total_phases)
-    result = run_logged_action(
-        "Ensure Git credential",
-        lambda: ensure_git_credential(
-            client,
-            credential_name=args.credential_name,
-            provider_name=provider_name,
-            git_username=args.git_username,
-            personal_access_token=personal_access_token,
-            is_default=bool(args.set_default),
-        ),
+    existing = run_logged_action(
+        "Inspect existing Git credential",
+        lambda: ensure_git_credential_presence(client, credential_name=args.credential_name),
         logger=log,
     )
+    if existing and not args.force_update:
+        if args.set_default:
+            log.warning("The --set-default flag was ignored because the credential already exists and --force-update was not used")
+        result = existing
+    else:
+        log.info("Loading Git PAT from Vault secret %s", args.vault_secret_ocid)
+        personal_access_token = run_logged_action(
+            "Resolve Git PAT from Vault",
+            lambda: get_secret_text(args.vault_secret_ocid, signer, cfg["aidp"]["region"]),
+            logger=log,
+        )
+        result = run_logged_action(
+            "Ensure Git credential",
+            lambda: ensure_git_credential(
+                client,
+                credential_name=args.credential_name,
+                provider_name=provider_name,
+                git_username=args.git_username,
+                personal_access_token=personal_access_token,
+                is_default=bool(args.set_default),
+            ),
+            logger=log,
+        )
 
     log.info("== Summary ==")
     log.info("Context: %s", args.context)
